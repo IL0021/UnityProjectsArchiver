@@ -2,16 +2,21 @@ using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
 using System.IO;
+using System;
+using System.Collections;
 public class UIHandler : MonoBehaviour
 {
     public static UIHandler Instance;
-    GameObject sourcePanel, listPanel, dialogPanel;
-    TMP_InputField sourceInputField;
+    GameObject sourcePanel, listPanel, dialogPanel, loadingPanel;
+    TMP_InputField sourceInputField, destinationInputField;
     Button startButton, backButton, yes, no;
     public Button continueButton;
     GameObject card;
-    Transform listContent;
+    Transform listContent, processingImage;
     Slider scanSlider;
+    public Coroutine rotateImageCoroutine;
+
+    public string destinationPath = "";
 
     void Awake()
     {
@@ -36,6 +41,7 @@ public class UIHandler : MonoBehaviour
     private void GetReferences()
     {
         sourceInputField = transform.GetChildWithName("SourceInputField").GetComponent<TMP_InputField>();
+        destinationInputField = transform.GetChildWithName("DestinationInputField").GetComponent<TMP_InputField>();
         startButton = transform.GetChildWithName("StartButton").GetComponent<Button>();
 
         sourcePanel = transform.GetChildWithName("SourcePanel").gameObject;
@@ -51,6 +57,10 @@ public class UIHandler : MonoBehaviour
         dialogPanel = transform.GetChildWithName("DialogPanel").gameObject;
         yes = dialogPanel.transform.GetChildWithName("YesButton").GetComponent<Button>();
         no = dialogPanel.transform.GetChildWithName("NoButton").GetComponent<Button>();
+
+        loadingPanel = transform.GetChildWithName("LoadingPanel").gameObject;
+        loadingPanel.SetActive(false);
+        processingImage = loadingPanel.transform.GetChildWithName("ProcessingImage");
     }
 
     private void AssignListeners()
@@ -61,21 +71,45 @@ public class UIHandler : MonoBehaviour
         {
             listPanel.SetActive(false);
             sourcePanel.SetActive(true);
-            GameManager.Instance.unityProjects.Clear();
-            foreach (Transform child in listContent)
-            {
-                Destroy(child.gameObject);
-            }
+            CleanProjects();
         });
         yes.onClick.AddListener(OnYesButtonClicked);
         no.onClick.AddListener(OnNoButtonClicked);
+    }
+
+    private void CleanProjects()
+    {
+        GameManager.Instance.unityProjects.Clear();
+        foreach (Transform child in listContent)
+        {
+            Destroy(child.gameObject);
+        }
     }
 
     private void OnYesButtonClicked()
     {
         "Yes button clicked.".Print();
         dialogPanel.SetActive(false);
-        GameManager.Instance.PerformActionsOnProjects();
+        listPanel.SetActive(false);
+        loadingPanel.SetActive(true);
+        rotateImageCoroutine = StartCoroutine(RotateProcessingImage());
+        GameManager.Instance.PerformActionsOnProjects(() =>
+        {
+            if (rotateImageCoroutine != null) StopCoroutine(rotateImageCoroutine);
+            loadingPanel.SetActive(false);
+            sourcePanel.SetActive(true);
+            Debug.Log("Processing finished.");
+        });
+    }
+
+    private IEnumerator RotateProcessingImage()
+    {
+        float rotationSpeed = 100f;
+        while (true)
+        {
+            processingImage.Rotate(Vector3.forward, rotationSpeed * Time.deltaTime);
+            yield return null;
+        }
     }
 
     private void OnNoButtonClicked()
@@ -91,7 +125,9 @@ public class UIHandler : MonoBehaviour
     }
     private void OnStartButtonClicked()
     {
+        CleanProjects();
         GameManager.Instance.StartSearch(sourceInputField.text);
+        destinationPath = destinationInputField.text;
         sourcePanel.SetActive(false);
         listPanel.SetActive(true);
     }

@@ -2,15 +2,17 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
-using UnityEngine.TestTools;
 using System;
 using System.IO.Compression;
+using System.Threading.Tasks;
 
 public class GameManager : MonoBehaviour
 {
     public static GameManager Instance;
     public List<ProjectData> unityProjects = new List<ProjectData>();
     private Coroutine _searchCoroutine;
+
+    string myDocumentsPath, defaultArchivePath;
     void Awake()
     {
         if (Instance == null)
@@ -21,6 +23,13 @@ public class GameManager : MonoBehaviour
         else
         {
             Destroy(gameObject);
+        }
+        //Create a UnityProjectsArchive folder in My Documents if it doesn't exist
+        myDocumentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        defaultArchivePath = Path.Combine(myDocumentsPath, "UnityProjectsArchive");
+        if (!Directory.Exists(defaultArchivePath))
+        {
+            Directory.CreateDirectory(defaultArchivePath);
         }
     }
 
@@ -98,34 +107,70 @@ public class GameManager : MonoBehaviour
         UIHandler.Instance.continueButton.interactable = true;
     }
 
-    public void PerformActionsOnProjects()
+    public void PerformActionsOnProjects(Action onComplete = null)
     {
+        StartCoroutine(ProcessProjects(onComplete));
+    }
+
+    private IEnumerator ProcessProjects(Action onComplete)
+    {
+        int maxConcurrentTasks = 10;
+        List<Task> activeTasks = new List<Task>();
+
         foreach (var project in unityProjects)
         {
+            Task task = null;
             switch (project.actionType)
             {
                 case ActionType.Archive:
                     Debug.Log($"Archiving project: {project.projectPath}");
-                    StartCoroutine(ArchiveProject(project.projectPath));
+                    task = Task.Run(() => ArchiveProject(project.projectPath));
                     break;
                 case ActionType.Delete:
                     Debug.Log($"Deleting project: {project.projectPath}");
-                    StartCoroutine(DeleteProject(project.projectPath));
+                    task = Task.Run(() => DeleteProject(project.projectPath));
                     break;
                 case ActionType.None:
                     Debug.Log($"No action for project: {project.projectPath}");
                     break;
             }
+            if (task != null)
+            {
+                activeTasks.Add(task);
+                while (activeTasks.Count >= maxConcurrentTasks)
+                {
+                    yield return null;
+                    activeTasks.RemoveAll(t => t.IsCompleted);
+                }
+            }
+        }
+        while (activeTasks.Count > 0)
+        {
+            yield return null;
+            activeTasks.RemoveAll(t => t.IsCompleted);
+        }
+        onComplete?.Invoke();
+    }
+
+    private void DeleteProject(string projectPath)
+    {
+        ForceDeleteDirectory(projectPath);
+    }
+
+    private void ForceDeleteDirectory(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            var dirInfo = new DirectoryInfo(path) { Attributes = FileAttributes.Normal };
+            foreach (var info in dirInfo.GetFileSystemInfos("*", SearchOption.AllDirectories))
+            {
+                info.Attributes = FileAttributes.Normal;
+            }
+            Directory.Delete(path, true);
         }
     }
 
-    private IEnumerator DeleteProject(string projectPath)
-    {
-        Directory.Delete(projectPath, true);
-        yield return null;
-    }
-
-    private IEnumerator ArchiveProject(string projectPath)
+    private void ArchiveProject(string projectPath)
     {
         projectPath = projectPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string parentDir = Path.GetDirectoryName(projectPath);
@@ -153,8 +198,26 @@ public class GameManager : MonoBehaviour
             }
         }
 
-        Directory.Delete(projectPath, true);
-        yield return null;
+        if(UIHandler.Instance.destinationPath != "" && Directory.Exists(UIHandler.Instance.destinationPath))
+        {
+            string finalArchivePath = Path.Combine(UIHandler.Instance.destinationPath, Path.GetFileName(archivePath));
+            if (File.Exists(finalArchivePath))
+            {
+                File.Delete(finalArchivePath);
+            }
+            File.Move(archivePath, finalArchivePath);
+        }
+        else
+        {
+            string finalArchivePath = Path.Combine(defaultArchivePath, Path.GetFileName(archivePath));
+            if (File.Exists(finalArchivePath))
+            {
+                File.Delete(finalArchivePath);
+            }
+            File.Move(archivePath, finalArchivePath);
+        }
+
+        ForceDeleteDirectory(projectPath);
     }
 
     private struct SearchNode
